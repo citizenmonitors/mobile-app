@@ -31,6 +31,12 @@
         "EXPO_PUBLIC_API_BASE_URL": "https://api.citizenmonitors.com/api/v1/mobile"
       }
     },
+    "preview-simulator": {
+      "extends": "preview",
+      "ios": {
+        "simulator": true
+      }
+    },
     "production": {
       "autoIncrement": true,
       "channel": "production",

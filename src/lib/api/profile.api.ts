@@ -455,3 +455,19 @@ export async function upgradeVolunteerToObserver(
     }
   );
 }
+
+export type DeleteMyAccountResponse = {
+  message?: string;
+  success?: boolean;
+};
+
+/**
+ * Permanently deletes the authenticated user's account.
+ * Backend contract: DELETE /profile/me
+ */
+export async function deleteMyAccount(): Promise<DeleteMyAccountResponse> {
+  return apiRequest<DeleteMyAccountResponse>("/profile/me", {
+    method: "DELETE",
+    auth: true,
+  });
+}

@@ -49,6 +49,7 @@ export type MeMenuItemId =
   | "archive-reports"
   | "support-faq"
   | "feedback"
+  | "delete-account"
   | "sign-out";
 
 export type MeMenuItem = {
@@ -244,6 +245,13 @@ export function getMeOtherItems(): MeMenuItem[] {
       title: "Give Feedback",
       subtitle: "Tell us how to improve the app",
       icon: icon(Feedback),
+    },
+    {
+      id: "delete-account",
+      title: "Delete Account",
+      subtitle: "Permanently delete your account and data",
+      icon: icon(SignOut),
+      tone: "danger",
     },
     {
       id: "sign-out",

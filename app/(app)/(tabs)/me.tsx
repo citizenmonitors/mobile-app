@@ -53,6 +53,7 @@ import {
 import { useElectionVaultQuery } from "@/hooks/api/useElectionVaultQuery";
 import { useMyProfileQuery } from "@/hooks/api/useMyProfileQuery";
 import {
+  useDeleteMyAccountMutation,
   useGenerateAnonymousUsernameMutation,
   useSubmitFeedbackMutation,
   useUpdateAnonymousIdentityMutation,
@@ -78,6 +79,7 @@ import {
   promptDeviceAuthentication,
   setAppLockEnabled,
 } from "@/lib/auth/appLockPreference";
+import { signOutFromGoogle } from "@/lib/auth/googleAuth";
 import { Theme } from "@/theme";
 import { BirthdayValue, Gender } from "@/types/onboarding";
 
@@ -445,6 +447,7 @@ export default function MeScreen() {
     useUpgradePublicViewerToVolunteerMutation();
   const upgradeVolunteerToObserverMutation =
     useUpgradeVolunteerToObserverMutation();
+  const deleteMyAccountMutation = useDeleteMyAccountMutation();
 
   const scrollViewRef = useRef<ScrollView>(null);
 
@@ -687,7 +690,8 @@ export default function MeScreen() {
     updateAnonymousIdentityMutation.isPending ||
     submitFeedbackMutation.isPending ||
     upgradePublicViewerToVolunteerMutation.isPending ||
-    upgradeVolunteerToObserverMutation.isPending;
+    upgradeVolunteerToObserverMutation.isPending ||
+    deleteMyAccountMutation.isPending;
 
   const handleGenerateAnonymousUsername = async () => {
     try {
@@ -1039,6 +1043,57 @@ export default function MeScreen() {
     });
   };
 
+  const handleDeleteAccount = async () => {
+    try {
+      await deleteMyAccountMutation.mutateAsync();
+      await signOutFromGoogle().catch(() => undefined);
+      await signOut();
+      showToast({
+        message: "Your account has been deleted.",
+        type: "success",
+      });
+      router.replace(Paths.welcome);
+    } catch (mutationError) {
+      showToast({
+        message: getErrorMessage(
+          mutationError,
+          "Unable to delete your account. Please try again."
+        ),
+        type: "error",
+      });
+    }
+  };
+
+  const confirmDeleteAccount = () => {
+    Alert.alert(
+      "Delete Account",
+      "This permanently deletes your Citizen Monitors account and associated data from our servers. This cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Continue",
+          style: "destructive",
+          onPress: () => {
+            Alert.alert(
+              "Confirm deletion",
+              "Are you sure you want to permanently delete your account?",
+              [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Delete Account",
+                  style: "destructive",
+                  onPress: () => {
+                    void handleDeleteAccount();
+                  },
+                },
+              ]
+            );
+          },
+        },
+      ]
+    );
+  };
+
   const handleItemPress = (item: MeMenuItem) => {
     switch (item.id) {
       case "personal-profile":
@@ -1086,6 +1141,9 @@ export default function MeScreen() {
         return;
       case "feedback":
         feedbackSheetRef.current?.present();
+        return;
+      case "delete-account":
+        confirmDeleteAccount();
         return;
       case "sign-out":
         Alert.alert("Sign Out", "Are you sure you want to log out?", [

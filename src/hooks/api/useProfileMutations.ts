@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import {
+  deleteMyAccount,
   generateAnonymousUsername,
   MobileNotificationSettingsState,
   submitFeedback,
@@ -102,6 +103,17 @@ export function useUpgradeVolunteerToObserverMutation() {
       upgradeVolunteerToObserver(payload),
     onSuccess: () => {
       invalidateProfileQueries(queryClient);
+    },
+  });
+}
+
+export function useDeleteMyAccountMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: deleteMyAccount,
+    onSuccess: () => {
+      queryClient.clear();
     },
   });
 }
