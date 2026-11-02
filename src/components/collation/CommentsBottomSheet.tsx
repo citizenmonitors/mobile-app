@@ -5,19 +5,38 @@ import {
   BottomSheetTextInput,
 } from "@gorhom/bottom-sheet";
 import { Ionicons } from "@expo/vector-icons";
-import { forwardRef, useCallback, useMemo, useState } from "react";
-import { Keyboard, Platform, Pressable, StyleSheet, View } from "react-native";
+import { forwardRef, useCallback, useMemo, useRef, useState } from "react";
+import {
+  Alert,
+  Keyboard,
+  Platform,
+  Pressable,
+  StyleSheet,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import PulseActionSheet, {
+  PulseAction,
+  PulseActionSheetHandle,
+} from "@/components/pulse/PulseActionSheet";
+import PulseReportSheet, {
+  PulseReportSheetHandle,
+} from "@/components/pulse/PulseReportSheet";
+import { LIKE_COLOR } from "@/components/pulse/PulseDiscussionCard";
 import AppText from "@/components/ui/AppText";
 import { useBottomSheetBackHandler } from "@/hooks/useBottomSheetBackHandler";
 import { formatTimeAgo } from "@/lib/formatTimeAgo";
 import { useOfflineSync } from "@/context/OfflineSyncContext";
+import { useAppToast } from "@/hooks/useAppToast";
 import {
+  useBlockPulseAuthorMutation,
   useCreatePulseCommentMutation,
-  useLikePulseCommentMutation,
+  useDeletePulseCommentMutation,
   usePulseCommentsQuery,
   usePulseViewerQuery,
+  useSetPulseCommentLikeMutation,
+  useUpdatePulseCommentMutation,
 } from "@/hooks/api/usePulseQueries";
 import { PulseComment } from "@/lib/api/pulse.api";
 import { shouldQueueAfterError } from "@/lib/offlineSubmission";
@@ -25,6 +44,7 @@ import { Theme } from "@/theme";
 
 export type DiscussionComment = {
   id: string;
+  isOwned?: boolean;
   author: string;
   body: string;
   minutesAgo: number;
@@ -32,10 +52,14 @@ export type DiscussionComment = {
   shares: number;
   isLikedByCurrentUser?: boolean;
   pendingSync?: boolean;
+  isEdited?: boolean;
 };
 
 type Props = {
-  postId?: string | null;
+  postId?:
+    | string
+    | null; /** The current user wrote the post; they may delete any comment on it. */
+  postIsOwned?: boolean;
   comments?: DiscussionComment[];
   onSubmitComment?: (text: string) => void;
 };
@@ -55,9 +79,11 @@ function getMinutesAgo(dateValue?: string): number {
 function mapPulseComment(comment: PulseComment): DiscussionComment {
   return {
     id: comment.id,
+    isOwned: comment.isOwnedByCurrentUser === true,
     author: comment.author.displayName,
     body: comment.body,
     minutesAgo: getMinutesAgo(comment.createdAt),
+    isEdited: Boolean(comment.editedAt),
     likes: comment.likesCount,
     shares: 0,
     isLikedByCurrentUser: comment.isLikedByCurrentUser,
@@ -81,8 +107,8 @@ function getViewerName(params: {
 
 const CommentsBottomSheet = forwardRef<BottomSheetModal, Props>(
   function CommentsBottomSheet(
-    { postId: rawPostId, comments = [], onSubmitComment },
-    ref
+    { postId: rawPostId, postIsOwned = false, comments = [], onSubmitComment },
+    ref,
   ) {
     const insets = useSafeAreaInsets();
 
@@ -96,7 +122,7 @@ const CommentsBottomSheet = forwardRef<BottomSheetModal, Props>(
      */
     const snapPoints = useMemo(() => ["62%", "92%"], []);
     const { handleSheetChange } = useBottomSheetBackHandler(
-      ref as React.RefObject<BottomSheetModal | null>
+      ref as React.RefObject<BottomSheetModal | null>,
     );
 
     const postId = rawPostId ?? null;
@@ -105,12 +131,22 @@ const CommentsBottomSheet = forwardRef<BottomSheetModal, Props>(
 
     const commentsQuery = usePulseCommentsQuery(postId);
     const createCommentMutation = useCreatePulseCommentMutation();
-    const likeCommentMutation = useLikePulseCommentMutation();
+    const likeCommentMutation = useSetPulseCommentLikeMutation();
+    const updateCommentMutation = useUpdatePulseCommentMutation();
+    const deleteCommentMutation = useDeletePulseCommentMutation();
+    const blockMutation = useBlockPulseAuthorMutation();
     const viewerQuery = usePulseViewerQuery();
+    const { showToast } = useAppToast();
+    const actionsRef = useRef<PulseActionSheetHandle>(null);
+    const reportRef = useRef<PulseReportSheetHandle>(null);
 
     const [text, setText] = useState("");
-    const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
-    const [likeCounts, setLikeCounts] = useState<Record<string, number>>({});
+    // When set, the input edits this comment instead of adding a new one.
+    const [editingId, setEditingId] = useState<string | null>(null);
+    // Optimistic like state until the server answers (or while queued offline).
+    const [likeOverrides, setLikeOverrides] = useState<
+      Record<string, { liked: boolean; count: number }>
+    >({});
 
     const apiComments = useMemo(() => {
       return commentsQuery.data?.comments.map(mapPulseComment) ?? [];
@@ -166,10 +202,35 @@ const CommentsBottomSheet = forwardRef<BottomSheetModal, Props>(
       }
     }, [ref]);
 
+    const cancelEdit = useCallback(() => {
+      setEditingId(null);
+      setText("");
+    }, []);
+
     const submit = useCallback(async () => {
       const trimmed = text.trim();
 
       if (!trimmed) return;
+
+      if (editingId && postId) {
+        try {
+          await updateCommentMutation.mutateAsync({
+            postId,
+            commentId: editingId,
+            body: trimmed,
+          });
+          cancelEdit();
+        } catch (error) {
+          showToast({
+            type: "error",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Unable to edit comment.",
+          });
+        }
+        return;
+      }
 
       if (!postId) {
         onSubmitComment?.(trimmed);
@@ -218,287 +279,421 @@ const CommentsBottomSheet = forwardRef<BottomSheetModal, Props>(
         console.log("Pulse comment submit error:", error);
       }
     }, [
+      cancelEdit,
       commentsQuery,
       createCommentMutation,
+      editingId,
       enqueue,
       isOnline,
       onSubmitComment,
       postId,
+      showToast,
       text,
+      updateCommentMutation,
     ]);
 
     const toggleLike = useCallback(
       async (comment: DiscussionComment) => {
         if (!postId || comment.pendingSync) return;
 
-        const already =
-          likedIds.has(comment.id) || comment.isLikedByCurrentUser === true;
+        const current = likeOverrides[comment.id] ?? {
+          liked: comment.isLikedByCurrentUser === true,
+          count: comment.likes,
+        };
+        const like = !current.liked;
 
-        const nextLiked = !already;
-
-        setLikedIds((prev) => {
-          const next = new Set(prev);
-
-          if (nextLiked) {
-            next.add(comment.id);
-          } else {
-            next.delete(comment.id);
-          }
-
-          return next;
-        });
-
-        setLikeCounts((prev) => ({
+        setLikeOverrides((prev) => ({
           ...prev,
-          [comment.id]: Math.max(
-            0,
-            (prev[comment.id] ?? comment.likes) + (nextLiked ? 1 : -1)
-          ),
+          [comment.id]: {
+            liked: like,
+            count: Math.max(0, current.count + (like ? 1 : -1)),
+          },
         }));
 
-        const queuedPayload = {
-          postId,
-          commentId: comment.id,
-        };
-
-        if (!isOnline) {
-          enqueue({
-            type: "pulse-like-comment",
-            payload: queuedPayload,
+        const clearOverride = () =>
+          setLikeOverrides((prev) => {
+            const next = { ...prev };
+            delete next[comment.id];
+            return next;
           });
 
+        const queuedPayload = { postId, commentId: comment.id, liked: like };
+
+        if (!isOnline) {
+          enqueue({ type: "pulse-like-comment", payload: queuedPayload });
           return;
         }
 
         try {
+          // POST likes, DELETE unlikes; the list refetches with server values.
           await likeCommentMutation.mutateAsync({
             postId,
             commentId: comment.id,
+            like,
           });
+          clearOverride();
         } catch (error) {
           if (shouldQueueAfterError(error)) {
-            enqueue({
-              type: "pulse-like-comment",
-              payload: queuedPayload,
-            });
-
+            enqueue({ type: "pulse-like-comment", payload: queuedPayload });
             return;
           }
 
+          clearOverride();
           console.log("Pulse comment like error:", error);
         }
       },
-      [enqueue, isOnline, likeCommentMutation, likedIds, postId]
+      [enqueue, isOnline, likeCommentMutation, likeOverrides, postId],
     );
 
-    const canSend = text.trim().length > 0 && !createCommentMutation.isPending;
+    const openCommentActions = useCallback(
+      (comment: DiscussionComment) => {
+        if (!postId || comment.pendingSync) return;
+
+        const deleteComment = () =>
+          Alert.alert("Delete comment?", "This can't be undone.", [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Delete",
+              style: "destructive",
+              onPress: () => {
+                deleteCommentMutation
+                  .mutateAsync({ postId, commentId: comment.id })
+                  .catch((error: unknown) =>
+                    showToast({
+                      type: "error",
+                      message:
+                        error instanceof Error
+                          ? error.message
+                          : "Unable to delete comment.",
+                    }),
+                  );
+              },
+            },
+          ]);
+
+        const blockAuthor = () =>
+          Alert.alert(
+            `Block ${comment.author}?`,
+            "You won't see each other's posts or comments. You can unblock them from your profile.",
+            [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: "Block",
+                style: "destructive",
+                onPress: () => {
+                  blockMutation
+                    .mutateAsync({ commentId: comment.id })
+                    .then(() =>
+                      showToast({
+                        type: "success",
+                        message: `${comment.author} is blocked.`,
+                      }),
+                    )
+                    .catch((error: unknown) =>
+                      showToast({
+                        type: "error",
+                        message:
+                          error instanceof Error
+                            ? error.message
+                            : "Unable to block.",
+                      }),
+                    );
+                },
+              },
+            ],
+          );
+
+        const actions: PulseAction[] = [];
+
+        if (comment.isOwned) {
+          actions.push({
+            icon: "create-outline",
+            label: "Edit comment",
+            onPress: () => {
+              setEditingId(comment.id);
+              setText(comment.body);
+            },
+          });
+        }
+
+        // The post's author may delete any comment on their post.
+        if (comment.isOwned || postIsOwned) {
+          actions.push({
+            icon: "trash-outline",
+            label: "Delete comment",
+            danger: true,
+            onPress: deleteComment,
+          });
+        }
+
+        if (!comment.isOwned) {
+          actions.push(
+            {
+              icon: "flag-outline",
+              label: "Report comment",
+              danger: true,
+              onPress: () =>
+                reportRef.current?.present({
+                  postId,
+                  commentId: comment.id,
+                  authorName: comment.author,
+                }),
+            },
+            {
+              icon: "ban-outline",
+              label: `Block ${comment.author}`,
+              danger: true,
+              onPress: blockAuthor,
+            },
+          );
+        }
+
+        actionsRef.current?.present(actions);
+      },
+      [blockMutation, deleteCommentMutation, postId, postIsOwned, showToast],
+    );
+
+    const canSend =
+      text.trim().length > 0 &&
+      !createCommentMutation.isPending &&
+      !updateCommentMutation.isPending;
 
     return (
-      <BottomSheetModal
-        ref={ref}
-        snapPoints={snapPoints}
-        index={1}
-        enablePanDownToClose
-        enableDynamicSizing={false}
-        topInset={insets.top + 12}
-        /**
-         * "interactive" — the sheet slides up to sit just above the keyboard
-         * on both iOS and Android physical devices. This is the correct mode
-         * for any sheet with a pinned bottom input (comments, chat, etc.).
-         *
-         * Do NOT use "extend" + here:
-         * adjustResize is deprecated on Android 11+ edge-to-edge layouts and
-         * fails silently on physical devices, leaving the input buried under
-         * the keyboard.
-         */
-        keyboardBehavior="interactive"
-        keyboardBlurBehavior="restore"
-        onChange={handleSheetChange}
-        backdropComponent={(props) => (
-          <BottomSheetBackdrop
-            {...props}
-            appearsOnIndex={0}
-            disappearsOnIndex={-1}
-            opacity={0.3}
-            pressBehavior="close"
-          />
-        )}
-        handleIndicatorStyle={styles.handle}
-        backgroundStyle={styles.bg}
-      >
-        <View style={styles.sheetBody}>
-          <View style={styles.header}>
-            <View style={styles.headerTextWrap}>
-              <AppText style={styles.headerTitle}>Comments</AppText>
+      <>
+        <BottomSheetModal
+          ref={ref}
+          snapPoints={snapPoints}
+          index={1}
+          enablePanDownToClose
+          enableDynamicSizing={false}
+          topInset={insets.top + 12}
+          /**
+           * "interactive" — the sheet slides up to sit just above the keyboard
+           * on both iOS and Android physical devices. This is the correct mode
+           * for any sheet with a pinned bottom input (comments, chat, etc.).
+           *
+           * Do NOT use "extend" + here:
+           * adjustResize is deprecated on Android 11+ edge-to-edge layouts and
+           * fails silently on physical devices, leaving the input buried under
+           * the keyboard.
+           */
+          keyboardBehavior="interactive"
+          keyboardBlurBehavior="restore"
+          onChange={handleSheetChange}
+          backdropComponent={(props) => (
+            <BottomSheetBackdrop
+              {...props}
+              appearsOnIndex={0}
+              disappearsOnIndex={-1}
+              opacity={0.3}
+              pressBehavior="close"
+            />
+          )}
+          handleIndicatorStyle={styles.handle}
+          backgroundStyle={styles.bg}
+        >
+          <View style={styles.sheetBody}>
+            <View style={styles.header}>
+              <View style={styles.headerTextWrap}>
+                <AppText style={styles.headerTitle}>Comments</AppText>
 
-              {postId && !isOnline ? (
-                <AppText style={styles.headerSubtitle}>
-                  Offline comments will sync automatically
-                </AppText>
-              ) : null}
-            </View>
-
-            <Pressable onPress={close} hitSlop={8} style={styles.closeBtn}>
-              <Ionicons name="close" size={22} color={Theme.colors.textMuted} />
-            </Pressable>
-          </View>
-
-          <BottomSheetFlatList
-            style={styles.list}
-            data={resolvedComments}
-            keyExtractor={(comment) => comment.id}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode={
-              Platform.OS === "ios" ? "interactive" : "on-drag"
-            }
-            refreshing={commentsQuery.isRefetching}
-            onRefresh={() => {
-              if (postId) {
-                void commentsQuery.refetch();
-              }
-            }}
-            contentContainerStyle={[
-              styles.listContent,
-              resolvedComments.length === 0 && styles.listContentEmpty,
-            ]}
-            ListEmptyComponent={
-              commentsQuery.isLoading ? null : (
-                <View style={styles.emptyWrap}>
-                  <Ionicons
-                    name="chatbubbles-outline"
-                    size={32}
-                    color={Theme.colors.textMuted}
-                  />
-                  <AppText style={styles.emptyTitle}>No comments yet</AppText>
-                  <AppText style={styles.emptyText}>
-                    Be the first to respond to this pulse update.
+                {postId && !isOnline ? (
+                  <AppText style={styles.headerSubtitle}>
+                    Offline comments will sync automatically
                   </AppText>
-                </View>
-              )
-            }
-            renderItem={({ item }) => {
-              const isLiked =
-                likedIds.has(item.id) || item.isLikedByCurrentUser === true;
+                ) : null}
+              </View>
 
-              const displayLikes = likeCounts[item.id] ?? item.likes;
-
-              return (
-                <View style={styles.commentCard}>
-                  <View style={styles.commentHead}>
-                    <View style={styles.commentAuthorRow}>
-                      <Ionicons
-                        name={
-                          item.pendingSync
-                            ? "cloud-upload-outline"
-                            : "chatbox-ellipses-outline"
-                        }
-                        size={14}
-                        color={Theme.colors.textMuted}
-                      />
-
-                      <AppText style={styles.commentAuthor}>
-                        {item.author}
-                      </AppText>
-                    </View>
-
-                    <AppText style={styles.commentTime}>
-                      {item.pendingSync
-                        ? "Pending sync"
-                        : formatTimeAgo(item.minutesAgo)}
-                    </AppText>
-                  </View>
-
-                  <AppText style={styles.commentBody}>{item.body}</AppText>
-
-                  <View style={styles.commentActions}>
-                    <Pressable
-                      onPress={() => {
-                        void toggleLike(item);
-                      }}
-                      style={styles.likeBtn}
-                      hitSlop={6}
-                      disabled={item.pendingSync}
-                    >
-                      <Ionicons
-                        name={isLiked ? "thumbs-up" : "thumbs-up-outline"}
-                        size={15}
-                        color={
-                          isLiked
-                            ? Theme.colors.primary
-                            : Theme.colors.textMuted
-                        }
-                      />
-
-                      <AppText
-                        style={[
-                          styles.likeText,
-                          isLiked && { color: Theme.colors.primary },
-                        ]}
-                      >
-                        {displayLikes} Likes
-                      </AppText>
-                    </Pressable>
-                  </View>
-                </View>
-              );
-            }}
-          />
-
-          <View
-            style={[
-              styles.inputContainer,
-              // With keyboardBehavior="interactive" the sheet sits above the
-              // keyboard, so just use safe-area insets for the bottom gap.
-              { paddingBottom: Math.max(insets.bottom, 8) },
-            ]}
-          >
-            <View style={styles.inputRow}>
-              <View style={styles.inputIconWrap}>
+              <Pressable onPress={close} hitSlop={8} style={styles.closeBtn}>
                 <Ionicons
-                  name="chatbubbles-outline"
-                  size={20}
+                  name="close"
+                  size={22}
                   color={Theme.colors.textMuted}
                 />
-              </View>
-
-              <View style={styles.inputFieldWrap}>
-                <BottomSheetTextInput
-                  placeholder="Leave Comment, @ To Mention"
-                  placeholderTextColor={Theme.colors.textSoft}
-                  value={text}
-                  onChangeText={setText}
-                  style={styles.input}
-                  returnKeyType="send"
-                  onSubmitEditing={() => {
-                    void submit();
-                  }}
-                  multiline
-                />
-              </View>
+              </Pressable>
             </View>
 
-            <Pressable
-              onPress={() => {
-                void submit();
+            <BottomSheetFlatList
+              style={styles.list}
+              data={resolvedComments}
+              keyExtractor={(comment) => comment.id}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode={
+                Platform.OS === "ios" ? "interactive" : "on-drag"
+              }
+              refreshing={commentsQuery.isRefetching}
+              onRefresh={() => {
+                if (postId) {
+                  void commentsQuery.refetch();
+                }
               }}
-              disabled={!canSend}
-              style={[styles.submitBtn, !canSend && styles.submitBtnDisabled]}
+              contentContainerStyle={[
+                styles.listContent,
+                resolvedComments.length === 0 && styles.listContentEmpty,
+              ]}
+              ListEmptyComponent={
+                commentsQuery.isLoading ? null : (
+                  <View style={styles.emptyWrap}>
+                    <Ionicons
+                      name="chatbubbles-outline"
+                      size={32}
+                      color={Theme.colors.textMuted}
+                    />
+                    <AppText style={styles.emptyTitle}>No comments yet</AppText>
+                    <AppText style={styles.emptyText}>
+                      Be the first to respond to this pulse update.
+                    </AppText>
+                  </View>
+                )
+              }
+              renderItem={({ item }) => {
+                const override = likeOverrides[item.id];
+                const isLiked =
+                  override?.liked ?? item.isLikedByCurrentUser === true;
+                const displayLikes = override?.count ?? item.likes;
+                const canManage = !item.pendingSync && Boolean(postId);
+
+                return (
+                  <View style={styles.commentCard}>
+                    <View style={styles.commentHead}>
+                      <View style={styles.commentAuthorRow}>
+                        <Ionicons
+                          name={
+                            item.pendingSync
+                              ? "cloud-upload-outline"
+                              : "chatbox-ellipses-outline"
+                          }
+                          size={14}
+                          color={Theme.colors.textMuted}
+                        />
+
+                        <AppText style={styles.commentAuthor}>
+                          {item.author}
+                        </AppText>
+                      </View>
+
+                      <View style={styles.commentHeadRight}>
+                        <AppText style={styles.commentTime}>
+                          {item.pendingSync
+                            ? "Pending sync"
+                            : `${formatTimeAgo(item.minutesAgo)}${item.isEdited ? " · Edited" : ""}`}
+                        </AppText>
+
+                        {canManage ? (
+                          <Pressable
+                            onPress={() => openCommentActions(item)}
+                            hitSlop={10}
+                            accessibilityLabel="Comment options"
+                          >
+                            <Ionicons
+                              name="ellipsis-horizontal"
+                              size={16}
+                              color={Theme.colors.textSoft}
+                            />
+                          </Pressable>
+                        ) : null}
+                      </View>
+                    </View>
+
+                    <AppText style={styles.commentBody}>{item.body}</AppText>
+
+                    <View style={styles.commentActions}>
+                      <Pressable
+                        onPress={() => {
+                          void toggleLike(item);
+                        }}
+                        style={styles.likeBtn}
+                        hitSlop={6}
+                        disabled={item.pendingSync}
+                      >
+                        <Ionicons
+                          name={isLiked ? "heart" : "heart-outline"}
+                          size={16}
+                          color={isLiked ? LIKE_COLOR : Theme.colors.textMuted}
+                        />
+
+                        <AppText
+                          style={[
+                            styles.likeText,
+                            isLiked && { color: LIKE_COLOR },
+                          ]}
+                        >
+                          {displayLikes} Likes
+                        </AppText>
+                      </Pressable>
+                    </View>
+                  </View>
+                );
+              }}
+            />
+
+            <View
+              style={[
+                styles.inputContainer,
+                // With keyboardBehavior="interactive" the sheet sits above the
+                // keyboard, so just use safe-area insets for the bottom gap.
+                { paddingBottom: Math.max(insets.bottom, 8) },
+              ]}
             >
-              <AppText
-                style={[
-                  styles.submitBtnText,
-                  !canSend && styles.submitBtnTextDisabled,
-                ]}
+              {editingId ? (
+                <View style={styles.editingBar}>
+                  <AppText style={styles.editingText}>Editing comment</AppText>
+                  <Pressable onPress={cancelEdit} hitSlop={8}>
+                    <AppText style={styles.editingCancel}>Cancel</AppText>
+                  </Pressable>
+                </View>
+              ) : null}
+
+              <View style={styles.inputRow}>
+                <View style={styles.inputIconWrap}>
+                  <Ionicons
+                    name="chatbubbles-outline"
+                    size={20}
+                    color={Theme.colors.textMuted}
+                  />
+                </View>
+
+                <View style={styles.inputFieldWrap}>
+                  <BottomSheetTextInput
+                    placeholder="Leave Comment, @ To Mention"
+                    placeholderTextColor={Theme.colors.textSoft}
+                    value={text}
+                    onChangeText={setText}
+                    style={styles.input}
+                    returnKeyType="send"
+                    onSubmitEditing={() => {
+                      void submit();
+                    }}
+                    multiline
+                  />
+                </View>
+              </View>
+
+              <Pressable
+                onPress={() => {
+                  void submit();
+                }}
+                disabled={!canSend}
+                style={[styles.submitBtn, !canSend && styles.submitBtnDisabled]}
               >
-                {isOnline ? "Submit Comment" : "Save Offline"}
-              </AppText>
-            </Pressable>
+                <AppText
+                  style={[
+                    styles.submitBtnText,
+                    !canSend && styles.submitBtnTextDisabled,
+                  ]}
+                >
+                  {isOnline ? "Submit Comment" : "Save Offline"}
+                </AppText>
+              </Pressable>
+            </View>
           </View>
-        </View>
-      </BottomSheetModal>
+        </BottomSheetModal>
+        <PulseActionSheet ref={actionsRef} />
+        <PulseReportSheet ref={reportRef} />
+      </>
     );
-  }
+  },
 );
 
 export default CommentsBottomSheet;
@@ -580,6 +775,27 @@ const styles = StyleSheet.create({
     gap: 6,
   },
 
+  commentHeadRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  editingBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingBottom: 8,
+  },
+  editingText: {
+    fontSize: 12,
+    color: Theme.colors.textMuted,
+    fontFamily: Theme.fonts.body.medium,
+  },
+  editingCancel: {
+    fontSize: 12,
+    color: Theme.colors.primary,
+    fontFamily: Theme.fonts.body.semibold,
+  },
   commentHead: {
     flexDirection: "row",
     alignItems: "center",

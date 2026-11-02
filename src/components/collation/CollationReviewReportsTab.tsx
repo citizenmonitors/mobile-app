@@ -5,6 +5,7 @@
 import { BottomSheetModal } from "@gorhom/bottom-sheet";
 import { Ionicons } from "@expo/vector-icons";
 import {
+  Alert,
   Platform,
   Pressable,
   RefreshControl,
@@ -101,7 +102,7 @@ function applyOptimisticReviewAction(
   params: {
     targetId: string;
     dataType: "election" | "incident";
-    action: "agree" | "unagree" | "flag";
+    action: "agree" | "unagree" | "flag" | "unflag";
     myUserId: string;
     flagReason?: string;
   }
@@ -113,7 +114,7 @@ function applyOptimisticReviewAction(
   ): CollationReviewAction[] => {
     const withoutMine = actions.filter((a) => a.userId !== params.myUserId);
 
-    if (params.action === "unagree") {
+    if (params.action === "unagree" || params.action === "unflag") {
       return withoutMine;
     }
 
@@ -264,7 +265,7 @@ export default function CollationReviewReportsTab({
     (params: {
       targetId: string;
       dataType: FlagTarget["dataType"];
-      action: "agree" | "unagree" | "flag";
+      action: "agree" | "unagree" | "flag" | "unflag";
       flagReason?: string;
     }) => {
       const effectiveUserId = myUserId ?? "local-user";
@@ -316,6 +317,26 @@ export default function CollationReviewReportsTab({
     setFlagTarget(target);
     flagRef.current?.present();
   }, []);
+
+  const handleUnflag = useCallback(
+    (target: FlagTarget) => {
+      Alert.alert(
+        "Remove your flag?",
+        "Your flag on this report will be withdrawn.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Remove flag",
+            onPress: () => {
+              queueReviewAction({ ...target, action: "unflag" });
+              showToast({ type: "success", message: "Flag removed." });
+            },
+          },
+        ],
+      );
+    },
+    [queueReviewAction, showToast],
+  );
 
   const handleFlagSubmit = useCallback(
     (reason: string) => {
@@ -386,6 +407,9 @@ export default function CollationReviewReportsTab({
     [collation.fullTitle, showToast]
   );
 
+  // Agree / flag only work while the election is live; viewing stays open.
+  const canAct = collation.status === "live";
+
   const isInitialLoading = feedQuery.isLoading;
   const hasError = feedQuery.isError && results.length === 0 && incidents.length === 0;
   const isEmpty = !isInitialLoading && !hasError && results.length === 0 && incidents.length === 0;
@@ -422,7 +446,9 @@ export default function CollationReviewReportsTab({
               Couldn&apos;t load reports
             </AppText>
             <AppText style={styles.emptySubtitle}>
-              Pull down to try again.
+              {feedQuery.error instanceof Error && feedQuery.error.message
+                ? feedQuery.error.message
+                : "Pull down to try again."}
             </AppText>
           </View>
         ) : isEmpty ? (
@@ -525,6 +551,13 @@ export default function CollationReviewReportsTab({
                           dataType: "election",
                         })
                       }
+                      onUnflag={() =>
+                        handleUnflag({
+                          targetId: item.electionId,
+                          dataType: "election",
+                        })
+                      }
+                      canAct={canAct}
                       onShare={() => void handleShareResult(item)}
                     />
                   </View>
@@ -600,6 +633,13 @@ export default function CollationReviewReportsTab({
                           dataType: "incident",
                         })
                       }
+                      onUnflag={() =>
+                        handleUnflag({
+                          targetId: item.electionId,
+                          dataType: "incident",
+                        })
+                      }
+                      canAct={canAct}
                       onShare={() => void handleShareIncident(item)}
                     />
                   </View>
@@ -624,13 +664,44 @@ function ActionRow({
   myAction,
   onConfirm,
   onFlag,
+  onUnflag,
   onShare,
+  canAct,
 }: {
   myAction: CollationReviewAction | undefined;
   onConfirm: () => void;
   onFlag: () => void;
+  onUnflag: () => void;
   onShare: () => void;
+  /** False once the election has ended: show status only, no actions. */
+  canAct: boolean;
 }) {
+  const shareButton = (
+    <Pressable onPress={onShare} style={styles.shareBtn} hitSlop={6}>
+      <Ionicons
+        name="share-social-outline"
+        size={14}
+        color={Theme.colors.textMuted}
+      />
+      <AppText style={styles.shareText}>Share</AppText>
+    </Pressable>
+  );
+
+  if (!canAct) {
+    return (
+      <View style={styles.actionsRow}>
+        <AppText style={styles.reviewCount} numberOfLines={1}>
+          {myAction?.action === "agree"
+            ? "You confirmed this"
+            : myAction?.action === "flag"
+              ? "You flagged this"
+              : "Voting has ended"}
+        </AppText>
+        {shareButton}
+      </View>
+    );
+  }
+
   if (myAction?.action === "agree") {
     return (
       <View style={styles.actionsRow}>
@@ -659,12 +730,12 @@ function ActionRow({
   if (myAction?.action === "flag") {
     return (
       <View style={styles.actionsRow}>
-        <View style={styles.flaggedPill}>
+        <Pressable onPress={onUnflag} style={styles.flaggedPill} hitSlop={4}>
           <Ionicons name="flag-outline" size={14} color="#F04A1D" />
           <AppText style={styles.flaggedText} numberOfLines={1}>
-            Flagged - evidence under review
+            You flagged this — tap to undo
           </AppText>
-        </View>
+        </Pressable>
         <Pressable onPress={onShare} style={styles.shareBtn} hitSlop={6}>
           <Ionicons
             name="share-social-outline"

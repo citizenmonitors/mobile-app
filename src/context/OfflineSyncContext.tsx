@@ -31,6 +31,8 @@ import {
   createPulsePost,
   likePulseComment,
   likePulsePost,
+  unlikePulseComment,
+  unlikePulsePost,
   PulseVisibilityScope,
 } from "@/lib/api/pulse.api";
 import { ElectionResultDraft, IncidentDraft } from "@/lib/reporting";
@@ -137,7 +139,14 @@ function getBoolean(payload: Record<string, unknown>, key: string): boolean {
 function getVisibilityScope(
   payload: Record<string, unknown>,
 ): PulseVisibilityScope {
-  return payload.visibilityScope === "lga" ? "lga" : "ward";
+  const scope = payload.visibilityScope;
+
+  return scope === "state" ||
+    scope === "lga" ||
+    scope === "ward" ||
+    scope === "polling-unit"
+    ? scope
+    : "all";
 }
 
 function getElectionId(payload: Record<string, unknown>): string {
@@ -203,7 +212,12 @@ async function syncQueuedAction(item: QueuedAction): Promise<SyncResult> {
           return { ok: true };
         }
 
-        await likePulsePost(postId);
+        // Older queued items have no `liked` flag; they were always likes.
+        if (item.payload.liked === false) {
+          await unlikePulsePost(postId);
+        } else {
+          await likePulsePost(postId);
+        }
 
         return { ok: true, invalidatePulse: true };
       }
@@ -238,10 +252,11 @@ async function syncQueuedAction(item: QueuedAction): Promise<SyncResult> {
           return { ok: true };
         }
 
-        await likePulseComment({
-          postId,
-          commentId,
-        });
+        if (item.payload.liked === false) {
+          await unlikePulseComment({ postId, commentId });
+        } else {
+          await likePulseComment({ postId, commentId });
+        }
 
         return { ok: true, invalidatePulse: true };
       }

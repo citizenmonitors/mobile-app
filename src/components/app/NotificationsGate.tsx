@@ -270,6 +270,14 @@ function handleNotificationRoute(data: AppNotificationData | null): void {
     }
   }
 
+  // Pulse notifications (likes, comments, reposts) carry the post id.
+  const pulsePostId = getStringFromData(data, ["postId", "pulsePostId"]);
+
+  if (pulsePostId) {
+    router.push(Paths.appPulsePost(pulsePostId) as never);
+    return;
+  }
+
   if (data.type === "result-submitted" && typeof data.collationId === "string") {
     router.push({
       pathname: "/(app)/election/[id]",

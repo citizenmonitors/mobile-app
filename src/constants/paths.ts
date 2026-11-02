@@ -20,6 +20,13 @@ export const Paths = {
   appLearningFeed: "/(app)/learning-feed",
 
   appHelpSupport: "/(app)/help-support",
+  appBlockedUsers: "/(app)/blocked-users",
+  appPulseCompose: "/(app)/pulse-compose",
+  appPulsePost: (id: string) =>
+    ({
+      pathname: "/(app)/pulse-post/[id]" as const,
+      params: { id },
+    }) as const,
 
   appNotificationDetails: (id: string) =>
     ({

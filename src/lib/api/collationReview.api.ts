@@ -33,7 +33,7 @@ export type CollationReviewMediaFile = {
 
 export type CollationReviewAction = {
   userId: string;
-  action: "agree" | "flag" | "unagree";
+  action: "agree" | "flag" | "unagree" | "unflag";
   _id: string;
   evidenceId?: string;
   flagReason?: string;
@@ -117,8 +117,8 @@ export type CollationUserActionResponse = {
 export type CollationUserActionPayload = {
   /** The specific submission being acted on (NOT the election id). */
   targetId: string;
-  /** "unagree" undoes a prior "agree" — same endpoint, confirmed by backend. */
-  action: "agree" | "unagree" | "flag";
+  /** "unagree" / "unflag" undo a prior "agree" / "flag". */
+  action: "agree" | "unagree" | "flag" | "unflag";
   dataType: "election" | "incident";
   flagReason?: string;
 };

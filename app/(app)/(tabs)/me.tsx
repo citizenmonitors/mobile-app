@@ -1045,11 +1045,14 @@ export default function MeScreen() {
 
   const handleDeleteAccount = async () => {
     try {
-      await deleteMyAccountMutation.mutateAsync();
+      const response = await deleteMyAccountMutation.mutateAsync();
       await signOutFromGoogle().catch(() => undefined);
       await signOut();
       showToast({
-        message: "Your account has been deleted.",
+        // Observers are told their results stay in collation, unnamed.
+        message: response?.note
+          ? `Your account has been deleted. ${response.note}`
+          : "Your account has been deleted.",
         type: "success",
       });
       router.replace(Paths.welcome);
@@ -1104,6 +1107,9 @@ export default function MeScreen() {
         return;
       case "app-lock":
         appLockSheetRef.current?.present();
+        return;
+      case "blocked-users":
+        router.push(Paths.appBlockedUsers);
         return;
       case "polling-unit":
         pollingUnitSheetRef.current?.present();

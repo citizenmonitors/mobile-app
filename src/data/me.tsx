@@ -38,6 +38,7 @@ export type MeMenuItemId =
   | "personal-profile"
   | "security"
   | "app-lock"
+  | "blocked-users"
   | "polling-unit"
   | "upgrade-user"
   | "pvc-verification"
@@ -149,6 +150,12 @@ export function getMeAccountItems(user: MeUser): MeMenuItem[] {
       id: "app-lock",
       title: "App Lock",
       subtitle: "Use biometrics or your PIN to open the app",
+      icon: icon(Security),
+    },
+    {
+      id: "blocked-users",
+      title: "Blocked Users",
+      subtitle: "Manage people you've blocked in Pulse",
       icon: icon(Security),
     },
     {

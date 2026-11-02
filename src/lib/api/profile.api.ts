@@ -459,6 +459,13 @@ export async function upgradeVolunteerToObserver(
 export type DeleteMyAccountResponse = {
   message?: string;
   success?: boolean;
+  deletedResults?: number;
+  deletedIncidents?: number;
+  anonymizedResults?: number;
+  anonymizedIncidents?: number;
+  notifiedPeers?: number;
+  /** e.g. observers: "Your election results and incidents stay in collation without your name or account." */
+  note?: string;
 };
 
 /**

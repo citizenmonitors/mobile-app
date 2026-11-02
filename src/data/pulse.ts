@@ -5,19 +5,51 @@ import { ReviewReportItem } from "@/data/collation";
 
 // Types
 
+/** A post embedded inside a quote card. */
+export type PulseQuotedPost = {
+  id: string;
+  /** The quoted post was deleted. */
+  unavailable: boolean;
+  author?: string;
+  avatarUri?: string;
+  body?: string;
+  imageUri?: string;
+  createdAt?: string;
+};
+
 export type PulseDiscussionPost = {
   id: string;
+  /** Author name of the content shown (the original author on plain reposts). */
   author: string;
+  /** The current user created this feed item (wrote it, reposted or quoted it). */
+  isOwned: boolean;
   avatarUri?: string;
-  electionLabel: string;
-  /** e.g. "Post Within Polling Unit" or election name */
-  scopeLabel: string;
   body: string;
   imageUri?: string;
-  minutesAgo: number;
+  /** ISO timestamp the post was created. */
+  createdAt: string;
   likes: number;
   commentCount: number;
-  shares: number;
+  /** Reposts plus quotes. */
+  repostCount: number;
+  /** Plain repost: shows the original's content with a "reposted" line. */
+  isRepost: boolean;
+  /** Quote: the user's own text with the quoted post embedded below. */
+  isQuote: boolean;
+  /** On reposts and quotes: the original post's id. */
+  originalPostId?: string;
+  /** On plain reposts: who reposted it. */
+  repostedBy?: string;
+  /** On plain reposts whose original was deleted. */
+  originalUnavailable?: boolean;
+  /** On quotes: the post being quoted. */
+  quoted?: PulseQuotedPost;
+  /** The user has plainly reposted this content. */
+  isRepostedByMe: boolean;
+  /** On reposts and quotes: the original post is the user's own. */
+  originalIsOwned?: boolean;
+  /** The text or image was edited after posting. */
+  isEdited?: boolean;
 };
 
 export type LiveElectionDiscussion = {

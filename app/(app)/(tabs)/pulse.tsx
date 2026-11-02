@@ -1,26 +1,29 @@
-import { BottomSheetModal } from "@gorhom/bottom-sheet";
-import { router } from "expo-router";
-import { useCallback, useRef, useState } from "react";
+import { Ionicons } from "@expo/vector-icons";
+import { router, useLocalSearchParams } from "expo-router";
+import { useEffect, useRef } from "react";
 import { StyleSheet, View } from "react-native";
 
 import AppGradientScreen from "@/components/app/AppGradientScreen";
 import ScreenHeader from "@/components/elections/ScreenHeader";
 import AppText from "@/components/ui/AppText";
+import FloatingActionButton from "@/components/ui/FloatingActionButton";
 import PulseForYouTab from "@/components/pulse/PulseForYouTab";
-import PulsePostButton from "@/components/pulse/PulsePostButton";
-import SharePulseOpinionSheet from "@/components/pulse/SharePulseOpinionSheet";
 import { Paths } from "@/constants/paths";
 import { Theme } from "@/theme";
 
 export { default as ErrorBoundary } from "@/components/app/RouteErrorFallback";
 
 export default function PulseScreen() {
-  const [scrolling, setScrolling] = useState(false);
-  const shareSheetRef = useRef<BottomSheetModal>(null);
+  // Shared links look like citizenmonitors.com/pulse?post=<id>: open that post.
+  const { post } = useLocalSearchParams<{ post?: string }>();
+  const openedPostRef = useRef<string | null>(null);
 
-  const handleOpenShareSheet = useCallback(() => {
-    requestAnimationFrame(() => shareSheetRef.current?.present());
-  }, []);
+  useEffect(() => {
+    if (post && openedPostRef.current !== post) {
+      openedPostRef.current = post;
+      router.push(Paths.appPulsePost(post));
+    }
+  }, [post]);
 
   return (
     <AppGradientScreen scroll={false}>
@@ -33,18 +36,23 @@ export default function PulseScreen() {
           />
 
           <AppText style={styles.subtitle}>
-            Stay informed. Stay vigilant. Every update matters.
+            Community updates from citizens across Nigeria
           </AppText>
         </View>
 
         <View style={styles.body}>
-          <PulseForYouTab onScrollStateChange={setScrolling} />
+          <PulseForYouTab />
         </View>
 
-        <PulsePostButton onPress={handleOpenShareSheet} collapsed={scrolling} />
+        {/* X-style compose button: opens the full-screen composer. */}
+        <FloatingActionButton
+          collapsed
+          label="Post"
+          accessibilityLabel="Create a post"
+          icon={<Ionicons name="add" size={28} color={Theme.colors.white} />}
+          onPress={() => router.push(Paths.appPulseCompose)}
+        />
       </View>
-
-      <SharePulseOpinionSheet ref={shareSheetRef} />
     </AppGradientScreen>
   );
 }

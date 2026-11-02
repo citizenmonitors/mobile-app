@@ -63,6 +63,16 @@
               "scheme": "https",
               "host": "citizenmonitors.com",
               "pathPrefix": "/press"
+            },
+            {
+              "scheme": "https",
+              "host": "www.citizenmonitors.com",
+              "pathPrefix": "/pulse"
+            },
+            {
+              "scheme": "https",
+              "host": "citizenmonitors.com",
+              "pathPrefix": "/pulse"
             }
           ],
           "category": [
